@@ -115,7 +115,7 @@ export default function Home() {
           <div className="bg-white/80 backdrop-blur-sm rounded-3xl shadow-2xl p-8 max-w-2xl mx-auto border border-white/20">
             <div className="mb-6">
               <label className="block text-sm font-semibold text-gray-700 mb-3 uppercase tracking-wide">
-                What's your business about?
+                What&apos;s your business about?
               </label>
               <div className="relative">
                 <input
@@ -319,7 +319,7 @@ export default function Home() {
               {
                 name: "Emily Watson",
                 role: "Creative Director",
-                text: "The quality of names generated is exceptional. Better than any naming agency I've used.",
+                text: "The quality of names generated is exceptional. Better than any naming agency I&apos;ve used.",
                 avatar: "EW"
               }
             ].map((testimonial, index) => (
@@ -333,7 +333,7 @@ export default function Home() {
                     <p className="text-sm text-gray-600">{testimonial.role}</p>
                   </div>
                 </div>
-                <p className="text-gray-700">"{testimonial.text}"</p>
+                <p className="text-gray-700">&ldquo;{testimonial.text}&rdquo;</p>
               </div>
             ))}
           </div>
