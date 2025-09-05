@@ -1,6 +1,10 @@
 'use client';
 
 import { useState } from 'react';
+import FullReportModal from '@/components/FullReportModal';
+
+// Create a simple cache for domain check results (client-side only)
+const domainCache = new Map();
 
 export default function Home() {
   const [keywords, setKeywords] = useState('');
@@ -9,7 +13,38 @@ export default function Home() {
     name: string;
     available?: boolean;
     status?: string;
+    source?: string;
   }>>([]);
+  const [isReportModalOpen, setIsReportModalOpen] = useState(false);
+  const [selectedName, setSelectedName] = useState('');
+
+  // Function to check domain with caching
+  const checkDomainWithCache = async (name: string) => {
+    const cleanName = name.toLowerCase().replace(/\s+/g, '').replace(/[^a-z0-9-]/g, '');
+    const cacheKey = `${cleanName}.com`;
+    
+    // Check cache first
+    if (domainCache.has(cacheKey)) {
+      return { name, ...domainCache.get(cacheKey) };
+    }
+    
+    try {
+      const checkResponse = await fetch(`/api/check-domain?name=${encodeURIComponent(name)}`);
+      if (!checkResponse.ok) {
+        throw new Error('Domain check failed');
+      }
+      const availabilityData = await checkResponse.json();
+      
+      // Cache the result for 5 minutes
+      domainCache.set(cacheKey, availabilityData);
+      setTimeout(() => domainCache.delete(cacheKey), 5 * 60 * 1000);
+      
+      return { name, ...availabilityData };
+    } catch (error) {
+      console.error(`Failed to check domain for ${name}:`, error);
+      return { name, available: false, status: 'error' };
+    }
+  };
 
   const handleGenerate = async () => {
     if (!keywords) return;
@@ -31,23 +66,21 @@ export default function Home() {
 
       const data = await response.json();
       
-      // Check availability for each name
+      // Set initial state with "checking" status
+      const namesWithCheckingStatus = data.names.map((name: string) => ({
+        name,
+        available: undefined,
+        status: 'checking'
+      }));
+      
+      setGeneratedNames(namesWithCheckingStatus);
+      
+      // Check availability for each name with delays to avoid rate limiting
       const namesWithAvailability = await Promise.all(
         data.names.map(async (name: string, index: number) => {
-          // Add a small delay to avoid rate limiting
-          await new Promise(resolve => setTimeout(resolve, index * 100));
-          
-          try {
-            const checkResponse = await fetch(`/api/check-domain?name=${encodeURIComponent(name)}`);
-            if (!checkResponse.ok) {
-              throw new Error('Domain check failed');
-            }
-            const availabilityData = await checkResponse.json();
-            return { name, ...availabilityData };
-          } catch (error) {
-            console.error(`Failed to check domain for ${name}:`, error);
-            return { name, available: false, status: 'error' };
-          }
+          // Add a small delay to avoid rate limiting (150ms between requests)
+          await new Promise(resolve => setTimeout(resolve, index * 150));
+          return checkDomainWithCache(name);
         })
       );
       
@@ -66,7 +99,24 @@ export default function Home() {
   };
 
   const handleGetReport = (name: string) => {
-    alert(`Premium report feature for "${name}" is coming soon!`);
+    setSelectedName(name);
+    setIsReportModalOpen(true);
+  };
+
+  const retryDomainCheck = async (name: string, index: number) => {
+    try {
+      const updatedNames = [...generatedNames];
+      updatedNames[index] = { ...updatedNames[index], status: 'checking' };
+      setGeneratedNames(updatedNames);
+      
+      const result = await checkDomainWithCache(name);
+      
+      const newUpdatedNames = [...generatedNames];
+      newUpdatedNames[index] = result;
+      setGeneratedNames(newUpdatedNames);
+    } catch (error) {
+      console.error(`Retry failed for ${name}:`, error);
+    }
   };
 
   return (
@@ -194,42 +244,66 @@ export default function Home() {
             </div>
 
             <div className="grid gap-4 mb-12">
-              {generatedNames.map((item, index) => (
-                <div key={index} className="bg-white rounded-2xl p-6 shadow-lg border border-gray-100 hover:shadow-xl transition-all duration-300 transform hover:-translate-y-1">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center space-x-4">
-                      <div className="w-12 h-12 bg-gradient-to-r from-blue-500 to-purple-500 rounded-xl flex items-center justify-center">
-                        <span className="text-white font-bold text-lg">
-                          {item.name.charAt(0)}
-                        </span>
+              {generatedNames.map((item, index) => {
+                let statusText = 'Checking...';
+                let statusClass = 'text-gray-500';
+                let showRetry = false;
+                
+                if (item.status === 'available') {
+                  statusText = '.com available';
+                  statusClass = 'text-green-600';
+                } else if (item.status === 'taken') {
+                  statusText = '.com taken';
+                  statusClass = 'text-red-600';
+                } else if (item.status === 'unknown' || item.status === 'error') {
+                  statusText = 'Check unavailable';
+                  statusClass = 'text-gray-500';
+                  showRetry = true;
+                }
+                
+                return (
+                  <div key={index} className="bg-white rounded-2xl p-6 shadow-lg border border-gray-100 hover:shadow-xl transition-all duration-300 transform hover:-translate-y-1">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center space-x-4">
+                        <div className="w-12 h-12 bg-gradient-to-r from-blue-500 to-purple-500 rounded-xl flex items-center justify-center">
+                          <span className="text-white font-bold text-lg">
+                            {item.name.charAt(0)}
+                          </span>
+                        </div>
+                        <div>
+                          <h3 className="text-xl font-semibold text-gray-900">{item.name}</h3>
+                          <div className="flex items-center">
+                            <span className={`text-sm ${statusClass} mr-2`}>
+                              {statusText}
+                            </span>
+                            {showRetry && (
+                              <button 
+                                onClick={() => retryDomainCheck(item.name, index)}
+                                className="text-xs text-blue-600 hover:text-blue-800 underline"
+                              >
+                                Retry
+                              </button>
+                            )}
+                          </div>
+                        </div>
                       </div>
-                      <div>
-                        <h3 className="text-xl font-semibold text-gray-900">{item.name}</h3>
-                        <p className={`text-sm ${
-                          item.available ? 'text-green-600' : 
-                          item.status === 'error' ? 'text-gray-500' : 'text-red-600'
-                        }`}>
-                          {item.status === 'error' ? 'Check failed' : 
-                           item.available ? '✓ .com available' : '✗ .com taken'}
-                        </p>
+                      <div className="flex items-center space-x-3">
+                        <button className="p-2 text-gray-400 hover:text-blue-600 transition-colors">
+                          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                          </svg>
+                        </button>
+                        <button 
+                          onClick={() => handleGetReport(item.name)}
+                          className="bg-gradient-to-r from-blue-600 to-purple-600 text-white px-6 py-2 rounded-lg font-medium hover:from-blue-700 hover:to-purple-700 transition-all duration-200"
+                        >
+                          Get Full Report
+                        </button>
                       </div>
-                    </div>
-                    <div className="flex items-center space-x-3">
-                      <button className="p-2 text-gray-400 hover:text-blue-600 transition-colors">
-                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                        </svg>
-                      </button>
-                      <button 
-                        onClick={() => handleGetReport(item.name)}
-                        className="bg-gradient-to-r from-blue-600 to-purple-600 text-white px-6 py-2 rounded-lg font-medium hover:from-blue-700 hover:to-purple-700 transition-all duration-200"
-                      >
-                        Get Report
-                      </button>
                     </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
 
             <div className="text-center">
@@ -362,6 +436,13 @@ export default function Home() {
           </p>
         </div>
       </footer>
+
+      {/* Full Report Modal */}
+      <FullReportModal
+        isOpen={isReportModalOpen}
+        onClose={() => setIsReportModalOpen(false)}
+        name={selectedName}
+      />
     </div>
   );
 }
