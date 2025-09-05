@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { checkDomainWithCache } from '@/lib/domainCheck';
 
 // List of popular domain extensions to check
 const DOMAIN_EXTENSIONS = ['.com', '.io', '.net', '.co', '.ai', '.org', '.dev', '.app'];
@@ -12,7 +13,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Format the base name (lowercase, no spaces)
-    const baseName = name.toLowerCase().replace(/\s+/g, '');
+    const baseName = name.toLowerCase().replace(/\s+/g, '').replace(/[^a-z0-9-]/g, '');
 
     // Check availability for each domain extension
     const domainResults = await Promise.all(
@@ -20,21 +21,13 @@ export async function POST(request: NextRequest) {
         const domainToCheck = `${baseName}${extension}`;
         
         try {
-          const response = await fetch(`https://api.domainr.com/v2/status?domain=${domainToCheck}&client_id=primenym`);
-          
-          if (!response.ok) {
-            throw new Error(`Domainr API error: ${response.status}`);
-          }
-
-          const data = await response.json();
-          const status = data.status[0]?.status;
-          const isAvailable = status === 'available';
+          const result = await checkDomainWithCache(domainToCheck);
           
           return {
             domain: domainToCheck,
             extension,
-            available: isAvailable,
-            status
+            available: result.available,
+            status: result.status
           };
         } catch (error) {
           console.error(`Error checking domain ${domainToCheck}:`, error);

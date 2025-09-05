@@ -3,8 +3,70 @@
 import { useState } from 'react';
 import FullReportModal from '@/components/FullReportModal';
 
-// Create a simple cache for domain check results (client-side only)
+// Simple in-memory cache for domain checks
 const domainCache = new Map();
+const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
+
+// Helper function to check domain with caching
+async function checkDomainWithCache(name: string) {
+  const cleanName = name.toLowerCase().replace(/\s+/g, '').replace(/[^a-z0-9-]/g, '');
+  const domainToCheck = `${cleanName}.com`;
+  const now = Date.now();
+  
+  // Check cache first
+  const cached = domainCache.get(domainToCheck);
+  if (cached && now - cached.timestamp < CACHE_DURATION) {
+    return { name, ...cached.data };
+  }
+  
+  try {
+    // Use Domainr API through RapidAPI
+    const response = await fetch(`https://domainr.p.rapidapi.com/v2/status?domain=${domainToCheck}`, {
+      method: 'GET',
+      headers: {
+        'x-rapidapi-key': process.env.NEXT_PUBLIC_RAPIDAPI_KEY || 'd65586099fmsh5f1a2354faf20b6p1382a6jsn7ba5353ddaba',
+        'x-rapidapi-host': 'domainr.p.rapidapi.com'
+      }
+    });
+
+    if (!response.ok) {
+      throw new Error(`Domainr API error: ${response.status}`);
+    }
+
+    const data = await response.json();
+    
+    if (!data.status || data.status.length === 0) {
+      throw new Error('No status in response');
+    }
+
+    const status = data.status[0]?.status;
+    const isAvailable = status === 'available';
+
+    const result = { 
+      name, 
+      domain: domainToCheck, 
+      available: isAvailable, 
+      status 
+    };
+    
+    // Cache the result
+    domainCache.set(domainToCheck, {
+      data: result,
+      timestamp: now
+    });
+    
+    return result;
+  } catch (error) {
+    console.error('Error checking domain:', error);
+    return { 
+      name, 
+      domain: domainToCheck, 
+      available: false, 
+      status: 'error',
+      error: error instanceof Error ? error.message : 'Unknown error'
+    };
+  }
+}
 
 export default function Home() {
   const [keywords, setKeywords] = useState('');
@@ -13,38 +75,10 @@ export default function Home() {
     name: string;
     available?: boolean;
     status?: string;
-    source?: string;
+    domain?: string;
   }>>([]);
   const [isReportModalOpen, setIsReportModalOpen] = useState(false);
   const [selectedName, setSelectedName] = useState('');
-
-  // Function to check domain with caching
-  const checkDomainWithCache = async (name: string) => {
-    const cleanName = name.toLowerCase().replace(/\s+/g, '').replace(/[^a-z0-9-]/g, '');
-    const cacheKey = `${cleanName}.com`;
-    
-    // Check cache first
-    if (domainCache.has(cacheKey)) {
-      return { name, ...domainCache.get(cacheKey) };
-    }
-    
-    try {
-      const checkResponse = await fetch(`/api/check-domain?name=${encodeURIComponent(name)}`);
-      if (!checkResponse.ok) {
-        throw new Error('Domain check failed');
-      }
-      const availabilityData = await checkResponse.json();
-      
-      // Cache the result for 5 minutes
-      domainCache.set(cacheKey, availabilityData);
-      setTimeout(() => domainCache.delete(cacheKey), 5 * 60 * 1000);
-      
-      return { name, ...availabilityData };
-    } catch (error) {
-      console.error(`Failed to check domain for ${name}:`, error);
-      return { name, available: false, status: 'error' };
-    }
-  };
 
   const handleGenerate = async () => {
     if (!keywords) return;
@@ -52,6 +86,7 @@ export default function Home() {
     setIsLoading(true);
     
     try {
+      // Get AI-generated names
       const response = await fetch('/api/generate', {
         method: 'POST',
         headers: {
@@ -78,8 +113,8 @@ export default function Home() {
       // Check availability for each name with delays to avoid rate limiting
       const namesWithAvailability = await Promise.all(
         data.names.map(async (name: string, index: number) => {
-          // Add a small delay to avoid rate limiting (150ms between requests)
-          await new Promise(resolve => setTimeout(resolve, index * 150));
+          // Add a small delay to avoid rate limiting (200ms between requests)
+          await new Promise(resolve => setTimeout(resolve, index * 200));
           return checkDomainWithCache(name);
         })
       );
@@ -117,6 +152,27 @@ export default function Home() {
     } catch (error) {
       console.error(`Retry failed for ${name}:`, error);
     }
+  };
+
+  const getStatusText = (status: string | undefined, available: boolean | undefined) => {
+    if (status === 'available') return '.com available';
+    if (status === 'active') return '.com registered';
+    if (status === 'inactive') return '.com inactive';
+    if (status === 'pending') return '.com pending';
+    if (status === 'disallowed') return '.com not allowed';
+    if (status === 'reserved') return '.com reserved';
+    if (status === 'premium') return '.com premium';
+    if (status === 'error') return 'Check failed';
+    if (available === true) return '.com available';
+    if (available === false) return '.com taken';
+    return 'Checking...';
+  };
+
+  const getStatusClass = (status: string | undefined, available: boolean | undefined) => {
+    if (status === 'available' || available === true) return 'text-green-600';
+    if (status === 'error') return 'text-gray-500';
+    if (status === 'checking') return 'text-gray-500';
+    return 'text-red-600';
   };
 
   return (
@@ -245,21 +301,9 @@ export default function Home() {
 
             <div className="grid gap-4 mb-12">
               {generatedNames.map((item, index) => {
-                let statusText = 'Checking...';
-                let statusClass = 'text-gray-500';
-                let showRetry = false;
-                
-                if (item.status === 'available') {
-                  statusText = '.com available';
-                  statusClass = 'text-green-600';
-                } else if (item.status === 'taken') {
-                  statusText = '.com taken';
-                  statusClass = 'text-red-600';
-                } else if (item.status === 'unknown' || item.status === 'error') {
-                  statusText = 'Check unavailable';
-                  statusClass = 'text-gray-500';
-                  showRetry = true;
-                }
+                const statusText = getStatusText(item.status, item.available);
+                const statusClass = getStatusClass(item.status, item.available);
+                const showRetry = item.status === 'error';
                 
                 return (
                   <div key={index} className="bg-white rounded-2xl p-6 shadow-lg border border-gray-100 hover:shadow-xl transition-all duration-300 transform hover:-translate-y-1">

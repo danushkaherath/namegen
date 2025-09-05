@@ -13,29 +13,29 @@ export async function GET(request: NextRequest) {
   const domainToCheck = `${cleanName}.com`;
 
   try {
-    // Use Domainr's free API to check availability
-    const response = await fetch(`https://api.domainr.com/v2/status?domain=${domainToCheck}&client_id=primenym`, {
+    // Use Domainr API through RapidAPI
+    const response = await fetch(`https://domainr.p.rapidapi.com/v2/status?domain=${domainToCheck}`, {
       method: 'GET',
       headers: {
-        'User-Agent': 'PrimeNym/1.0 (https://primenym.com)'
+        'x-rapidapi-key': process.env.RAPIDAPI_KEY || 'd65586099fmsh5f1a2354faf20b6p1382a6jsn7ba5353ddaba',
+        'x-rapidapi-host': 'domainr.p.rapidapi.com'
       }
     });
 
     if (!response.ok) {
-      // If Domainr API fails, try a fallback method
-      console.warn(`Domainr API failed with status ${response.status}, trying fallback method`);
-      return fallbackDomainCheck(cleanName);
+      throw new Error(`Domainr API error: ${response.status}`);
     }
 
     const data = await response.json();
     
     if (!data.status || data.status.length === 0) {
-      return fallbackDomainCheck(cleanName);
+      throw new Error('No status in response');
     }
 
     const status = data.status[0]?.status;
     
-    // Simplify the status into a boolean if it's available or not
+    // Domainr API status can be: active, inactive, pending, disallowed, available, reserved, premium, etc.
+    // We'll consider it available only if status is explicitly "available"
     const isAvailable = status === 'available';
 
     return NextResponse.json({ 
@@ -47,44 +47,12 @@ export async function GET(request: NextRequest) {
 
   } catch (error) {
     console.error('Error checking domain:', error);
-    return fallbackDomainCheck(cleanName);
-  }
-}
-
-// Fallback method for domain checking
-async function fallbackDomainCheck(name: string) {
-  const domainToCheck = `${name}.com`;
-  
-  try {
-    // Try a simple DNS lookup as fallback
-    // Note: This is a less reliable method but works as a fallback
-    const response = await fetch(`https://dns.google/resolve?name=${domainToCheck}&type=A`, {
-      method: 'GET'
+    return NextResponse.json({ 
+      name, 
+      domain: domainToCheck, 
+      available: false, 
+      status: 'error',
+      error: error instanceof Error ? error.message : 'Unknown error'
     });
-
-    if (response.ok) {
-      const data = await response.json();
-      // If we get a valid DNS response, the domain is probably taken
-      const isAvailable = !(data.Answer && data.Answer.length > 0);
-      
-      return NextResponse.json({ 
-        name, 
-        domain: domainToCheck, 
-        available: isAvailable, 
-        status: isAvailable ? 'available' : 'taken',
-        source: 'fallback'
-      });
-    }
-  } catch (fallbackError) {
-    console.error('Fallback domain check also failed:', fallbackError);
   }
-
-  // If all methods fail, return a neutral response
-  return NextResponse.json({ 
-    name, 
-    domain: domainToCheck, 
-    available: null, 
-    status: 'unknown',
-    source: 'none'
-  });
 }
